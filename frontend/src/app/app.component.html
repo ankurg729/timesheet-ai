@@ -1,0 +1,430 @@
+<div class="app-container">
+  <!-- Top Navigation Header -->
+  <header class="navbar">
+    <div class="brand">
+      <div class="logo-icon">📊</div>
+      <div>
+        <h1 class="brand-title">AI Timesheet Analytics & RAG Assistant</h1>
+        <p class="brand-subtitle">Hybrid Structured Analytics + Semantic Vector Search (ChromaDB & OpenAI)</p>
+      </div>
+    </div>
+
+    <!-- System Status Badges -->
+    <div class="status-bar">
+      @if (timesheetService.status(); as st) {
+        <div class="badge" [class.badge-success]="st.uploaded" [class.badge-neutral]="!st.uploaded">
+          <span class="dot"></span>
+          {{ st.uploaded ? st.totalEntries + ' Logs Loaded' : 'No Timesheet' }}
+        </div>
+        <div class="badge" [class.badge-success]="st.chromaConnected" [class.badge-warning]="!st.chromaConnected"
+             [title]="st.chromaConnected ? 'Connected to local ChromaDB Docker instance' : 'ChromaDB container offline; running on in-memory vector index fallback'">
+          <span class="dot"></span>
+          {{ st.chromaConnected ? 'ChromaDB Active' : 'Vector Memory Fallback' }}
+        </div>
+      }
+      <button class="btn-sm btn-outline" (click)="timesheetService.checkStatus()" title="Refresh status">
+        ↻ Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- Notification & Error Banners -->
+  @if (timesheetService.notificationMessage(); as msg) {
+    <div class="alert alert-success">
+      <span>✓ {{ msg }}</span>
+      <button class="close-btn" (click)="timesheetService.clearMessages()">×</button>
+    </div>
+  }
+  @if (timesheetService.errorMessage(); as err) {
+    <div class="alert alert-error">
+      <span>⚠ {{ err }}</span>
+      <button class="close-btn" (click)="timesheetService.clearMessages()">×</button>
+    </div>
+  }
+
+  <main class="content-grid">
+    <!-- LEFT COLUMN: Upload, Controls & Chat Assistant -->
+    <section class="left-panel">
+      <!-- Upload Card -->
+      <div class="card upload-card">
+        <div class="card-header">
+          <h2 class="card-title">Upload Jira Timesheet</h2>
+          <span class="card-hint">Supports .xlsx & .xls with flexible Jira columns</span>
+        </div>
+
+        <div class="upload-controls">
+          <label class="file-dropzone" for="excelFileInput">
+            <span class="dropzone-icon">📁</span>
+            @if (selectedFileName()) {
+              <span class="file-name-preview">{{ selectedFileName() }}</span>
+            } @else {
+              <span class="dropzone-text">Click to choose Excel file or drag & drop</span>
+            }
+            <input
+              id="excelFileInput"
+              type="file"
+              accept=".xlsx,.xls"
+              (change)="onFileSelected($event)"
+              hidden
+            />
+          </label>
+
+          <div class="upload-actions">
+            <button
+              class="btn btn-primary"
+              (click)="uploadFile()"
+              [disabled]="!selectedFile() || timesheetService.isUploading()"
+            >
+              @if (timesheetService.isUploading()) {
+                <span class="spinner"></span> Uploading...
+              } @else {
+                Upload Excel
+              }
+            </button>
+
+            <button
+              class="btn btn-secondary"
+              (click)="loadSampleData()"
+              [disabled]="timesheetService.isUploading()"
+              title="Instantly loads 20+ realistic Jira timesheet rows (PAM, PreAuth, Provider Registration)"
+            >
+              ⚡ Load Demo Dataset
+            </button>
+          </div>
+        </div>
+
+        <!-- File Metadata Pill -->
+        @if (timesheetService.status()?.uploaded) {
+          <div class="dataset-meta">
+            <div class="meta-item">
+              <span class="meta-label">File Name:</span>
+              <span class="meta-val">{{ timesheetService.status()?.fileName || 'Loaded Timesheet' }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Rows Processed:</span>
+              <span class="meta-val font-semibold">{{ timesheetService.status()?.totalEntries }}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Vector Documents:</span>
+              <span class="meta-val font-semibold">{{ timesheetService.status()?.collectionCount }}</span>
+            </div>
+            @if (timesheetService.status()?.dateRange; as dr) {
+              <div class="meta-item">
+                <span class="meta-label">Timesheet Period:</span>
+                <span class="meta-val">{{ dr.minDate }} to {{ dr.maxDate }}</span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- AI Chat Assistant Card -->
+      <div class="card chat-card">
+        <div class="chat-header">
+          <div class="chat-title-group">
+            <span class="chat-icon">🤖</span>
+            <div>
+              <h2 class="card-title">AI Timesheet Assistant</h2>
+              <span class="card-hint">Ask numerical, semantic, or hybrid questions</span>
+            </div>
+          </div>
+          <button class="btn-xs btn-outline" (click)="timesheetService.reindex()" title="Re-sync ChromaDB vector embeddings">
+            ⟳ Re-index
+          </button>
+        </div>
+
+        <!-- Quick Questions Chips -->
+        <div class="quick-chips-container">
+          <div class="chips-label">Quick Questions:</div>
+          <div class="chips-scroll">
+            @for (q of quickQuestions; track q) {
+              <button
+                class="chip"
+                (click)="askQuestion(q)"
+                [disabled]="!timesheetService.hasData() || timesheetService.isAsking()"
+              >
+                {{ q }}
+              </button>
+            }
+          </div>
+        </div>
+
+        <!-- Chat Conversation Messages Feed -->
+        <div class="chat-feed" #chatScrollContainer>
+          @if (timesheetService.chatMessages().length === 0) {
+            <div class="chat-empty-state">
+              <div class="empty-icon">💬</div>
+              <p class="empty-title">Ready for your timesheet questions!</p>
+              <p class="empty-subtitle">
+                Try asking numerical questions like <em>"What percentage of my time was spent on PAM?"</em>,
+                semantic questions like <em>"What work did I perform on PAM-382?"</em>, or
+                hybrid questions like <em>"How many hours did I spend on PreAuth and what work did I perform?"</em>
+              </p>
+            </div>
+          }
+
+          @for (msg of timesheetService.chatMessages(); track msg.id) {
+            <div class="chat-message" [class.user-msg]="msg.sender === 'user'" [class.ai-msg]="msg.sender === 'assistant'">
+              <div class="message-meta">
+                <span class="sender-name">{{ msg.sender === 'user' ? 'You' : 'Timesheet Assistant' }}</span>
+                @if (msg.questionType) {
+                  <span class="router-tag" [class.router-analytics]="msg.questionType === 'analytics'"
+                        [class.router-rag]="msg.questionType === 'rag'"
+                        [class.router-hybrid]="msg.questionType === 'hybrid'"
+                        [title]="msg.routingReason || ''">
+                    @if (msg.questionType === 'analytics') { 📊 Structured Analytics }
+                    @else if (msg.questionType === 'rag') { 🔍 RAG Semantic Retrieval }
+                    @else { ⚡ Hybrid (Analytics + RAG) }
+                  </span>
+                }
+              </div>
+
+              <div class="message-body">
+                <div class="message-text">{{ msg.text }}</div>
+
+                <!-- Sources / Citations Section -->
+                @if (msg.sources && msg.sources.length > 0) {
+                  <div class="sources-container">
+                    <button class="source-toggle-btn" (click)="toggleSource(msg.id)">
+                      <span>📄 Cited Sources ({{ msg.sources.length }} records)</span>
+                      <span>{{ isSourceExpanded(msg.id) ? '▲ Hide' : '▼ Show' }}</span>
+                    </button>
+
+                    @if (isSourceExpanded(msg.id)) {
+                      <div class="sources-list">
+                        @for (src of msg.sources; track $index) {
+                          <div class="source-item">
+                            <div class="source-header">
+                              <span class="source-jira">{{ src.jira }}</span>
+                              <span class="source-task">{{ src.task }}</span>
+                              <span class="source-hours">{{ src.hours }}h</span>
+                              <span class="source-date">{{ src.date }}</span>
+                            </div>
+                            @if (src.description || src.comment) {
+                              <div class="source-desc">
+                                {{ src.description || src.comment }}
+                              </div>
+                            }
+                          </div>
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          @if (timesheetService.isAsking()) {
+            <div class="chat-message ai-msg">
+              <div class="message-meta">
+                <span class="sender-name">Timesheet Assistant</span>
+                <span class="router-tag router-hybrid">Thinking & Synthesizing...</span>
+              </div>
+              <div class="message-body">
+                <div class="typing-indicator">
+                  <span></span><span></span><span></span>
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+
+        <!-- Chat Input Bar -->
+        <form class="chat-input-bar" (ngSubmit)="askQuestion()">
+          <input
+            type="text"
+            class="chat-input"
+            placeholder="Ask something about your timesheet..."
+            [ngModel]="userQuestion()"
+            (ngModelChange)="userQuestion.set($event)"
+            name="userQuestion"
+            [disabled]="timesheetService.isAsking()"
+          />
+          <button
+            type="submit"
+            class="btn btn-primary"
+            [disabled]="!userQuestion().trim() || timesheetService.isAsking() || !timesheetService.hasData()"
+          >
+            @if (timesheetService.isAsking()) {
+              <span class="spinner"></span>
+            } @else {
+              Ask AI
+            }
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- RIGHT COLUMN: Dashboard & Analytics Visualizations -->
+    <section class="right-panel">
+      <!-- Date Filter Bar -->
+      <div class="card filter-card">
+        <div class="filter-header">
+          <span class="filter-title">📅 Date Filter</span>
+          <div class="filter-presets">
+            <button
+              class="preset-btn"
+              [class.active]="activeFilterPreset() === 'all'"
+              (click)="selectFilterPreset('all')"
+            >
+              All Time
+            </button>
+            <button
+              class="preset-btn"
+              [class.active]="activeFilterPreset() === '30days'"
+              (click)="selectFilterPreset('30days')"
+            >
+              Last 30 Days
+            </button>
+            <button
+              class="preset-btn"
+              [class.active]="activeFilterPreset() === '3months'"
+              (click)="selectFilterPreset('3months')"
+            >
+              Last 3 Months
+            </button>
+            <button
+              class="preset-btn"
+              [class.active]="activeFilterPreset() === '6months'"
+              (click)="selectFilterPreset('6months')"
+            >
+              Last 6 Months
+            </button>
+          </div>
+        </div>
+
+        <div class="custom-range-row">
+          <label class="date-input-group">
+            <span>From:</span>
+            <input
+              type="date"
+              [ngModel]="customStartDate()"
+              (ngModelChange)="customStartDate.set($event)"
+            />
+          </label>
+          <label class="date-input-group">
+            <span>To:</span>
+            <input
+              type="date"
+              [ngModel]="customEndDate()"
+              (ngModelChange)="customEndDate.set($event)"
+            />
+          </label>
+          <button class="btn-sm btn-primary" (click)="applyCustomFilter()">
+            Apply Range
+          </button>
+        </div>
+      </div>
+
+      <!-- KPI Summary Cards -->
+      @if (timesheetService.analytics(); as an) {
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon icon-blue">⏱</div>
+            <div class="kpi-content">
+              <span class="kpi-label">Total Hours</span>
+              <span class="kpi-val">{{ an.totalHours }} <small>hrs</small></span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon icon-green">🏢</div>
+            <div class="kpi-content">
+              <span class="kpi-label">Projects</span>
+              <span class="kpi-val">{{ an.totalProjects }}</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon icon-purple">🎫</div>
+            <div class="kpi-content">
+              <span class="kpi-label">Jira Tickets</span>
+              <span class="kpi-val">{{ an.totalJiraTickets }}</span>
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon icon-amber">📌</div>
+            <div class="kpi-content">
+              <span class="kpi-label">Top Task</span>
+              <span class="kpi-val text-truncate" [title]="an.topTask?.task || 'N/A'">
+                {{ an.topTask ? an.topTask.task : 'N/A' }}
+              </span>
+              @if (an.topTask) {
+                <span class="kpi-sub">{{ an.topTask.hours }}h ({{ an.topTask.percentage }}%)</span>
+              }
+            </div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-icon icon-rose">🏷</div>
+            <div class="kpi-content">
+              <span class="kpi-label">Top Jira Ticket</span>
+              <span class="kpi-val text-truncate">
+                {{ an.topJiraTicket ? an.topJiraTicket.jira : 'N/A' }}
+              </span>
+              @if (an.topJiraTicket) {
+                <span class="kpi-sub">{{ an.topJiraTicket.hours }}h ({{ an.topJiraTicket.percentage }}%)</span>
+              }
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Grid -->
+        <div class="charts-grid">
+          <!-- Monthly Hours Line Chart -->
+          <div class="card chart-card">
+            <div class="card-header">
+              <h3 class="card-title">Monthly Hours Trend</h3>
+              <span class="card-hint">Total hours billed per month</span>
+            </div>
+            <div class="chart-container">
+              <canvas #monthlyCanvas></canvas>
+            </div>
+          </div>
+
+          <!-- Project Allocation Doughnut Chart -->
+          <div class="card chart-card">
+            <div class="card-header">
+              <h3 class="card-title">Project Allocation</h3>
+              <span class="card-hint">Time share across projects</span>
+            </div>
+            <div class="chart-container">
+              <canvas #projectCanvas></canvas>
+            </div>
+          </div>
+
+          <!-- Top Tasks Bar Chart -->
+          <div class="card chart-card">
+            <div class="card-header">
+              <h3 class="card-title">Top Tasks by Hours</h3>
+              <span class="card-hint">Activities consuming most effort</span>
+            </div>
+            <div class="chart-container">
+              <canvas #taskCanvas></canvas>
+            </div>
+          </div>
+
+          <!-- Top Jira Tickets Bar Chart -->
+          <div class="card chart-card">
+            <div class="card-header">
+              <h3 class="card-title">Top Jira Tickets</h3>
+              <span class="card-hint">Hours logged per issue key</span>
+            </div>
+            <div class="chart-container">
+              <canvas #jiraCanvas></canvas>
+            </div>
+          </div>
+        </div>
+      } @else {
+        <!-- Dashboard Empty State -->
+        <div class="card dashboard-empty">
+          <div class="empty-icon">📈</div>
+          <h3>Dashboard Awaiting Data</h3>
+          <p>Upload a Jira timesheet Excel file or click <strong>"Load Demo Dataset"</strong> to generate analytics cards and interactive visualizations.</p>
+        </div>
+      }
+    </section>
+  </main>
+</div>
