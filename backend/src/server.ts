@@ -72,3 +72,11 @@ server.on('error', (err: NodeJS.ErrnoException) => {
     console.error('Server error:', err);
   }
 });
+
+const handleShutdown = () => {
+  server.close(() => {
+    process.exit(0);
+  });
+};
+process.on('SIGTERM', handleShutdown);
+process.on('SIGINT', handleShutdown);
