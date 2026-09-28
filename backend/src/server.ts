@@ -52,7 +52,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 // Start Server
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`=================================================`);
   console.log(` AI Timesheet Analytics & RAG Assistant Backend`);
   console.log(` Server running on: http://localhost:${PORT}`);
@@ -68,5 +68,17 @@ app.listen(PORT, async () => {
   } else {
     console.log('ChromaDB not currently connected. Using in-memory vector storage fallback.');
     console.log('To start ChromaDB in Docker, run: docker compose up -d');
+  }
+});
+
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n[Backend Error] Port ${PORT} is already in use by another process.`);
+    console.error(`To fix this:`);
+    console.error(`  - Kill the process holding port ${PORT}: Stop-Process -Id (Get-NetTCPConnection -LocalPort ${PORT}).OwningProcess -Force`);
+    console.error(`  - Or set a different PORT in .env (e.g. PORT=3001)\n`);
+    process.exit(1);
+  } else {
+    console.error('Server error:', err);
   }
 });
