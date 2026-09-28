@@ -62,13 +62,19 @@ export class RagService {
       /\bdescribe\b/,
       /\bwork performed\b/,
       /\bwhat was involved\b/,
+      /\bwhat is the task\b/,
+      /\btask about\b/,
+      /\btell me about\b/,
+      /\babout ticket\b/,
+      /\babout jira\b/,
+      /\bwhat is\b/,
     ];
 
     const isAnalytical = analyticalPatterns.some((pattern) => pattern.test(q));
     const isSemantic = semanticPatterns.some((pattern) => pattern.test(q));
     const isCompare = /\bcompare\b/.test(q);
 
-    // Extract potential Jira ticket
+    // Extract potential Jira ticket (e.g. PAM-347, PAM-382)
     const jiraMatch = question.match(/\b([a-zA-Z]{2,10}-\d+)\b/);
     const jira = jiraMatch ? jiraMatch[1].toUpperCase() : undefined;
 
@@ -187,6 +193,8 @@ export class RagService {
           date: e.date,
           hours: e.hours,
           project: e.project,
+          description: e.description,
+          comment: e.comment,
         });
       }
     } else if (classification.suggestedFilters?.jira) {
@@ -194,22 +202,56 @@ export class RagService {
       const jiraKey = classification.suggestedFilters.jira;
       const data = analyticsService.getHoursForJira(entries, jiraKey);
 
-      analyticsContext = [
-        `Analytics for Ticket ${data.jira}:`,
-        `- Total Hours Logged: ${data.hours} hours`,
-        `- Total Timesheet Hours: ${totalHours} hours`,
-        `- Ticket Allocation: ${data.percentage}%`,
-        `- Log Count: ${data.entries.length} entries`,
-      ].join('\n');
+      if (data.entries.length === 0) {
+        const prefix = jiraKey.split('-')[0].toUpperCase();
+        const related = entries.filter(
+          (e) =>
+            e.jira.toUpperCase().startsWith(prefix + '-') ||
+            (e.project && e.project.toUpperCase() === prefix)
+        );
 
-      for (const e of data.entries.slice(0, 5)) {
-        sources.push({
-          jira: e.jira,
-          task: e.task,
-          date: e.date,
-          hours: e.hours,
-          project: e.project,
-        });
+        const ticketMap = new Map<string, { task: string; hours: number }>();
+        for (const e of related) {
+          const existing = ticketMap.get(e.jira);
+          if (existing) {
+            existing.hours += e.hours;
+          } else {
+            ticketMap.set(e.jira, { task: e.task, hours: e.hours });
+          }
+        }
+
+        const ticketList = Array.from(ticketMap.entries())
+          .sort((a, b) => b[1].hours - a[1].hours)
+          .map(([k, v]) => `- ${k}: ${v.task} (${Math.round(v.hours * 10) / 10} hours)`)
+          .join('\n');
+
+        analyticsContext = [
+          `Notice: Jira ticket "${jiraKey}" was NOT found in the uploaded timesheet.`,
+          related.length > 0
+            ? `Available tickets logged under project "${prefix}":\n${ticketList}`
+            : `No tickets matching "${prefix}" were found in this timesheet.`,
+        ].join('\n');
+      } else {
+        analyticsContext = [
+          `Analytics for Ticket ${data.jira}:`,
+          `- Task: ${data.entries[0]?.task || 'N/A'}`,
+          `- Total Hours Logged: ${data.hours} hours`,
+          `- Total Timesheet Hours: ${totalHours} hours`,
+          `- Ticket Allocation: ${data.percentage}%`,
+          `- Log Count: ${data.entries.length} entries`,
+        ].join('\n');
+
+        for (const e of data.entries.slice(0, 5)) {
+          sources.push({
+            jira: e.jira,
+            task: e.task,
+            date: e.date,
+            hours: e.hours,
+            project: e.project,
+            description: e.description,
+            comment: e.comment,
+          });
+        }
       }
     } else if (classification.suggestedFilters?.project) {
       // Specific Project (e.g. "PAM")
@@ -231,6 +273,8 @@ export class RagService {
           date: e.date,
           hours: e.hours,
           project: e.project,
+          description: e.description,
+          comment: e.comment,
         });
       }
     } else if (q.includes('monthly')) {
@@ -261,6 +305,8 @@ export class RagService {
             date: e.date,
             hours: e.hours,
             project: e.project,
+            description: e.description,
+            comment: e.comment,
           });
         }
       }
@@ -284,6 +330,8 @@ export class RagService {
             date: e.date,
             hours: e.hours,
             project: e.project,
+            description: e.description,
+            comment: e.comment,
           });
         }
       }
@@ -319,13 +367,96 @@ export class RagService {
     classification: QuestionClassification,
     dateFilter?: DateFilter
   ): Promise<ChatResponse> {
+    const mentionedJira = classification.suggestedFilters?.jira;
+    const ticketExists = mentionedJira
+      ? entries.some((e) => e.jira.toUpperCase() === mentionedJira.toUpperCase())
+      : false;
+
+    // Special handling when user asks about a ticket that does NOT exist in the timesheet
+    if (mentionedJira && !ticketExists) {
+      const prefix = mentionedJira.split('-')[0].toUpperCase();
+      const related = entries.filter(
+        (e) =>
+          e.jira.toUpperCase().startsWith(prefix + '-') ||
+          (e.project && e.project.toUpperCase() === prefix)
+      );
+
+      if (related.length > 0) {
+        const ticketMap = new Map<string, { task: string; hours: number }>();
+        for (const e of related) {
+          const existing = ticketMap.get(e.jira);
+          if (existing) {
+            existing.hours += e.hours;
+          } else {
+            ticketMap.set(e.jira, { task: e.task, hours: e.hours });
+          }
+        }
+
+        const ticketList = Array.from(ticketMap.entries())
+          .sort((a, b) => b[1].hours - a[1].hours)
+          .map(([k, v]) => `- ${k}: ${v.task} (${Math.round(v.hours * 10) / 10} hours logged)`)
+          .join('\n');
+
+        const context = [
+          `Question: "${question}"`,
+          `Notice: Jira ticket "${mentionedJira}" was NOT found in the uploaded timesheet.`,
+          `Available tickets logged under project "${prefix}":`,
+          ticketList,
+        ].join('\n');
+
+        const answer = await aiService.generateAnswer(question, context, 'rag');
+        const sources: RAGSource[] = related.slice(0, 4).map((e) => ({
+          jira: e.jira,
+          task: e.task,
+          date: e.date,
+          hours: e.hours,
+          project: e.project,
+          description: e.description,
+          comment: e.comment,
+        }));
+
+        return {
+          question,
+          questionType: 'rag',
+          answer,
+          sources,
+          routingReason: classification.reason,
+        };
+      }
+    }
+
+    // Normal RAG search
     const queryEmbedding = await embeddingService.generateEmbedding(question);
 
-    const retrieved = await chromaService.query(queryEmbedding, 5, {
-      jira: classification.suggestedFilters?.jira,
+    let retrieved = await chromaService.query(queryEmbedding, 5, {
+      jira: ticketExists ? mentionedJira : undefined,
       project: classification.suggestedFilters?.project,
       dateFilter,
     });
+
+    // If metadata filter was too restrictive, retry without filter
+    if (retrieved.length === 0 && (mentionedJira || classification.suggestedFilters?.project)) {
+      retrieved = await chromaService.query(queryEmbedding, 5, { dateFilter });
+    }
+
+    // Fallback: direct ticket lookup in entries if vector returned empty
+    if (retrieved.length === 0 && ticketExists && mentionedJira) {
+      const directMatches = entries.filter((e) => e.jira.toUpperCase() === mentionedJira.toUpperCase());
+      retrieved = directMatches.slice(0, 5).map((e) => ({
+        document: embeddingService.formatDocument(e),
+        metadata: e,
+        distance: 0,
+        source: {
+          jira: e.jira,
+          task: e.task,
+          date: e.date,
+          hours: e.hours,
+          project: e.project,
+          description: e.description,
+          comment: e.comment,
+        },
+      }));
+    }
 
     if (retrieved.length === 0) {
       return {

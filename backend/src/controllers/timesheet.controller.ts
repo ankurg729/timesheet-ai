@@ -228,6 +228,8 @@ export class TimesheetController {
         chromaConnected,
         collectionCount,
         hasOpenAiKey,
+        openAiError: aiService.lastError,
+        openAiChatModel: process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini',
         dateRange:
           dates.length > 0
             ? {

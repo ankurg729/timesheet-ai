@@ -21,6 +21,11 @@
           <span class="dot"></span>
           {{ st.chromaConnected ? 'ChromaDB Active' : 'Vector Memory Fallback' }}
         </div>
+        <div class="badge" [class.badge-success]="st.hasOpenAiKey && !st.openAiError" [class.badge-warning]="!st.hasOpenAiKey || st.openAiError"
+             [title]="(st.hasOpenAiKey && !st.openAiError) ? ('OpenAI LLM Connected (' + (st.openAiChatModel || 'gpt-4o-mini') + ')') : (st.openAiError || 'No OpenAI key in .env; using local Natural Language Generator')">
+          <span class="dot"></span>
+          {{ (st.hasOpenAiKey && !st.openAiError) ? ('OpenAI (' + (st.openAiChatModel || 'gpt-4o-mini') + ')') : 'Local NLG Mode' }}
+        </div>
       }
       <button class="btn-sm btn-outline" (click)="timesheetService.checkStatus()" title="Refresh status">
         ↻ Refresh
@@ -29,6 +34,11 @@
   </header>
 
   <!-- Notification & Error Banners -->
+  @if (timesheetService.status()?.openAiError; as openAiErr) {
+    <div class="alert alert-warning">
+      <span>ℹ <strong>OpenAI Notice:</strong> {{ openAiErr }}. The assistant is answering questions using its built-in local Natural Language Generator.</span>
+    </div>
+  }
   @if (timesheetService.notificationMessage(); as msg) {
     <div class="alert alert-success">
       <span>✓ {{ msg }}</span>

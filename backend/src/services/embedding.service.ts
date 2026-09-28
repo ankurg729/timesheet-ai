@@ -1,5 +1,6 @@
 import { OpenAI } from 'openai';
 import { TimesheetEntry } from '../types/timesheet.types.js';
+import { aiService } from './ai.service.js';
 
 export class EmbeddingService {
   private openai: OpenAI | null = null;
@@ -57,7 +58,6 @@ export class EmbeddingService {
     this.refreshClient();
 
     if (!this.openai) {
-      // Deterministic fallback for test/dev when no key is supplied
       return this.generateDeterministicVector(text, 1536);
     }
 
@@ -70,8 +70,17 @@ export class EmbeddingService {
 
       return response.data[0].embedding;
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`OpenAI Embedding generation failed: ${message}`);
+      const errorObj = err as any;
+      const status = errorObj?.status || errorObj?.statusCode;
+      const message = errorObj?.message || String(err);
+
+      if (status === 401) {
+        aiService.lastError = 'OpenAI 401: Invalid API Key. Please verify your OPENAI_API_KEY in .env';
+      } else if (status === 429) {
+        aiService.lastError = 'OpenAI 429: Quota or rate limit exceeded.';
+      }
+      console.warn(`OpenAI Embedding generation failed (${message}), using local deterministic vector.`);
+      return this.generateDeterministicVector(text, 1536);
     }
   }
 
@@ -97,12 +106,24 @@ export class EmbeddingService {
           encoding_format: 'float',
         });
 
-        // Sort by index just in case
         const sorted = [...response.data].sort((a, b) => a.index - b.index);
         allEmbeddings.push(...sorted.map((item) => item.embedding));
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new Error(`OpenAI Batch Embedding generation failed: ${message}`);
+        const errorObj = err as any;
+        const status = errorObj?.status || errorObj?.statusCode;
+        const message = errorObj?.message || String(err);
+
+        if (status === 401) {
+          aiService.lastError = 'OpenAI 401: Invalid API Key. Please verify your OPENAI_API_KEY in .env';
+        } else if (status === 429) {
+          aiService.lastError = 'OpenAI 429: Quota or rate limit exceeded.';
+        }
+        console.warn(`OpenAI Batch Embedding generation failed (${message}), using local deterministic vectors for remaining chunks.`);
+
+        // Fill remaining with deterministic vectors
+        const remaining = texts.slice(allEmbeddings.length);
+        allEmbeddings.push(...remaining.map((t) => this.generateDeterministicVector(t, 1536)));
+        break;
       }
     }
 

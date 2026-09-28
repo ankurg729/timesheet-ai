@@ -105,6 +105,9 @@ export interface TimesheetStatus {
   fileName?: string;
   chromaConnected: boolean;
   collectionCount: number;
+  hasOpenAiKey: boolean;
+  openAiError?: string | null;
+  openAiChatModel?: string;
   dateRange?: {
     minDate: string;
     maxDate: string;
